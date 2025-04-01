@@ -1,0 +1,41 @@
+plugins {
+    id 'java'
+    id 'application'
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    implementation project(':common')
+
+    // Подключаем аннотационный процессор из модуля processor
+    annotationProcessor project(':processor')
+
+    // Если нужны runtime или compileOnly зависимости из модуля processor,
+    // можно добавить их по необходимости. Но обычно это не требуется.
+}
+
+application {
+    mainClass = 'ru.nsu.palkin.Main'
+}
+
+// Добавляем директорию сгенерированных исходников, если она не добавляется автоматически
+sourceSets.main.java.srcDirs += 'build/generated/sources/annotationProcessor/java/main'
+
+application {
+    mainClass = 'ru.nsu.palkin.Main'
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+tasks.withType(JavaCompile) {
+    options.compilerArgs += '-parameters'
+    options.annotationProcessorPath = configurations.annotationProcessor
+    options.compilerArgs += ['-Xlint:unchecked']
+}
