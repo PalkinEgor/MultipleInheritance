@@ -64,25 +64,6 @@ public class AnnotationProcessor extends AbstractProcessor {
         }
     }
 
-    private MethodSpec createConstructor() {
-        return MethodSpec.constructorBuilder()
-                .addModifiers(Modifier.PUBLIC)
-                .addCode("""
-                        MultiInheritance annotation = this.getClass().getAnnotation(MultiInheritance.class);
-                        if (annotation != null) {
-                            for (Class<?> parentClass : annotation.value()) {
-                                try {
-                                    ISomeInterface parent = ($T) parentClass.getDeclaredConstructor().newInstance();
-                                    parents.add(parent);
-                                } catch (Exception e) {
-                                    e.printStackTrace();
-                                }
-                            }
-                        }
-                        """, ISomeInterface.class)
-                .build();
-    }
-
     private MethodSpec createMethod(ExecutableElement method) {
         List<ParameterSpec> parameterSpecs = new ArrayList<>();
         List<String> parameterNames = new ArrayList<>();
@@ -128,8 +109,6 @@ public class AnnotationProcessor extends AbstractProcessor {
         TypeSpec.Builder classBuilder = TypeSpec.classBuilder("ISomeInterfaceRoot")
                 .addModifiers(Modifier.ABSTRACT, Modifier.PUBLIC)
                 .addSuperinterface(ClassName.get("ru.nsu.palkin", "ISomeInterface"))
-                .addField(createParentsField())
-                .addMethod(createConstructor())
                 .addMethod(createMroMethod())
                 .addMethod(createGetSuperClassesMethod());
 
@@ -160,7 +139,7 @@ public class AnnotationProcessor extends AbstractProcessor {
                 .addModifiers(Modifier.PUBLIC)
                 .returns(void.class)
                 .addCode("""
-                        List<Class<?>> order = C3Linearization.c3Linearization(this.getClass());
+                        java.util.List<Class<?>> order = C3Linearization.c3Linearization(this.getClass());
                         System.out.println(order);
                         """)
                 .build();
@@ -207,7 +186,7 @@ public class AnnotationProcessor extends AbstractProcessor {
             result = "throw new RuntimeException(\"No valid someMethod implementation found\");";
         }
         call.append(
-                "List<Class<?>> order = C3Linearization.c3Linearization(this.getClass());\n" +
+                "java.util.List<Class<?>> order = C3Linearization.c3Linearization(this.getClass());\n" +
                         "order.remove(0);\n" +
                         type +
                         "for (Class<?> cls : order) {\n" +
@@ -228,18 +207,6 @@ public class AnnotationProcessor extends AbstractProcessor {
                 .returns(ClassName.get(method.getReturnType()))
                 .addParameters(parameterSpecs)
                 .addCode(codeBuilder.build())
-                .build();
-    }
-
-    private FieldSpec createParentsField() {
-        return FieldSpec.builder(
-                        ParameterizedTypeName.get(
-                                ClassName.get(List.class),
-                                ClassName.get("ru.nsu.palkin", "ISomeInterface")),
-                        "parents",
-                        Modifier.PRIVATE,
-                        Modifier.FINAL)
-                .initializer("new $T<>()", ArrayList.class)
                 .build();
     }
 }
