@@ -1,6 +1,6 @@
 package ru.nsu.palkin;
 
-public class ClassD implements ISomeInterface {
+public class ClassD implements Interface {
 
     @Override
     public void someMethod() {

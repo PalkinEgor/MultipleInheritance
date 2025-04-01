@@ -1,6 +1,7 @@
 package ru.nsu.palkin;
 
-public interface ISomeInterface {
+@Homogenous
+public interface Interface {
     void someMethod();
 
     void someMethod2();

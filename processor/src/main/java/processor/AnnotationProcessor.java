@@ -2,7 +2,7 @@ package processor;
 
 import com.google.auto.service.AutoService;
 import com.squareup.javapoet.*;
-import ru.nsu.palkin.ISomeInterface;
+import ru.nsu.palkin.Homogenous;
 import ru.nsu.palkin.MultiInheritance;
 
 import javax.annotation.processing.*;
@@ -18,9 +18,9 @@ import java.util.stream.Collectors;
 
 @SupportedSourceVersion(SourceVersion.RELEASE_21)
 @AutoService(Processor.class)
-@SupportedAnnotationTypes("ru.nsu.palkin.MultiInheritance")
+@SupportedAnnotationTypes({"ru.nsu.palkin.MultiInheritance", "ru.nsu.palkin.Homogenous"})
 public class AnnotationProcessor extends AbstractProcessor {
-    private boolean rootGenerated = false;
+    private Set<String> generatedRootClasses = new HashSet<>();
 
     @Override
     public synchronized void init(ProcessingEnvironment processingEnv) {
@@ -29,38 +29,58 @@ public class AnnotationProcessor extends AbstractProcessor {
 
     @Override
     public boolean process(Set<? extends TypeElement> annotations, RoundEnvironment roundEnv) {
-        if (rootGenerated) {
-            return true;
-        }
-
-        Set<TypeElement> classElements = new HashSet<>();
+        Set<TypeElement> multiInheritanceElements = new HashSet<>();
         for (Element element : roundEnv.getElementsAnnotatedWith(MultiInheritance.class)) {
             if (element instanceof TypeElement) {
-                classElements.add((TypeElement) element);
+                multiInheritanceElements.add((TypeElement) element);
             }
         }
 
-        if (!classElements.isEmpty()) {
-            generateRootClass();
-            rootGenerated = true;
+        if (multiInheritanceElements.isEmpty()) {
+            return true;
+        }
+
+        Set<TypeElement> homogenousInterfaces = roundEnv.getElementsAnnotatedWith(Homogenous.class).stream()
+                .filter(e -> e.getKind() == ElementKind.INTERFACE)
+                .map(e -> (TypeElement) e)
+                .collect(Collectors.toSet());
+
+        if (homogenousInterfaces.isEmpty()) {
+            processingEnv.getMessager().printMessage(
+                    Diagnostic.Kind.ERROR, "Не найдено ни одного интерфейса с аннотацией @Homogenous.");
+            return true;
+        }
+
+        for (TypeElement interfaceElement : homogenousInterfaces) {
+            String qualifiedName = interfaceElement.getQualifiedName().toString();
+            if (!generatedRootClasses.contains(qualifiedName)) {
+                generateRootClass(interfaceElement);
+                generatedRootClasses.add(qualifiedName);
+            }
         }
 
         return true;
     }
 
-    private void generateRootClass() {
+    private void generateRootClass(TypeElement interfaceElement) {
         try {
-            TypeSpec rootClass = createRootClass();
-
-            JavaFile.builder("ru.nsu.palkin", rootClass)
+            TypeSpec rootClass = createRootClass(interfaceElement);
+            if (rootClass == null) {
+                return;
+            }
+            PackageElement packageElement = processingEnv.getElementUtils().getPackageOf(interfaceElement);
+            String pkgName = packageElement.getQualifiedName().toString();
+            JavaFile.builder(pkgName, rootClass)
                     .indent("    ")
                     .skipJavaLangImports(true)
                     .build()
                     .writeTo(processingEnv.getFiler());
 
-            processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE, "ISomeInterfaceRoot generated successfully.");
+            processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE,
+                    "Root class generated successfully for interface: " + interfaceElement.getQualifiedName());
         } catch (IOException e) {
-            processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR, "Error generating class: " + e.getMessage());
+            processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR,
+                    "Error generating class for interface " + interfaceElement.getQualifiedName() + ": " + e.getMessage());
         }
     }
 
@@ -98,27 +118,26 @@ public class AnnotationProcessor extends AbstractProcessor {
                 .build();
     }
 
-    private TypeSpec createRootClass() {
-        TypeElement interfaceElement = processingEnv.getElementUtils()
-                .getTypeElement("ru.nsu.palkin.ISomeInterface");
+    private TypeSpec createRootClass(TypeElement interfaceElement) {
+        String interfacePackage = processingEnv.getElementUtils().getPackageOf(interfaceElement).getQualifiedName().toString();
+        String interfaceSimpleName = interfaceElement.getSimpleName().toString();
 
-        if (interfaceElement == null) {
-            processingEnv.getMessager().printMessage(
-                    Diagnostic.Kind.ERROR, "Не удаётся найти интерфейс ru.nsu.palkin.ISomeInterface");
-        }
-        TypeSpec.Builder classBuilder = TypeSpec.classBuilder("ISomeInterfaceRoot")
+        // Имя генерируемого класса
+        String generatedClassName = interfaceSimpleName + "Root";
+
+        TypeSpec.Builder classBuilder = TypeSpec.classBuilder(generatedClassName)
                 .addModifiers(Modifier.ABSTRACT, Modifier.PUBLIC)
-                .addSuperinterface(ClassName.get("ru.nsu.palkin", "ISomeInterface"))
+                .addSuperinterface(ClassName.get(interfacePackage, interfaceSimpleName))
                 .addMethod(createMroMethod())
                 .addMethod(createGetSuperClassesMethod());
 
+        // Для каждого метода интерфейса генерируем обёртку и реализацию вызова метода next<ИмяМетода>
         for (ExecutableElement method : ElementFilter.methodsIn(interfaceElement.getEnclosedElements())) {
             classBuilder.addMethod(createMethod(method));
-            classBuilder.addMethod(createNextMethod(method));
+            classBuilder.addMethod(createNextMethod(method, interfaceElement));
         }
 
         return classBuilder.build();
-
     }
 
     private MethodSpec createGetSuperClassesMethod() {
@@ -126,11 +145,11 @@ public class AnnotationProcessor extends AbstractProcessor {
                 .addModifiers(Modifier.PUBLIC)
                 .returns(void.class)
                 .addCode("""
-                        $T annotation = this.getClass().getAnnotation($T.class);
-                        if (annotation != null) {
-                            System.out.println(java.util.Arrays.toString(annotation.value()));
-                        }
-                        """, MultiInheritance.class, MultiInheritance.class)
+                $T annotation = this.getClass().getAnnotation($T.class);
+                if (annotation != null) {
+                    System.out.println(java.util.Arrays.toString(annotation.value()));
+                }
+                """, MultiInheritance.class, MultiInheritance.class)
                 .build();
     }
 
@@ -139,13 +158,13 @@ public class AnnotationProcessor extends AbstractProcessor {
                 .addModifiers(Modifier.PUBLIC)
                 .returns(void.class)
                 .addCode("""
-                        java.util.List<Class<?>> order = C3Linearization.c3Linearization(this.getClass());
-                        System.out.println(order);
-                        """)
+                java.util.List<Class<?>> order = C3Linearization.c3Linearization(this.getClass());
+                System.out.println(order);
+                """)
                 .build();
     }
 
-    private MethodSpec createNextMethod(ExecutableElement method) {
+    private MethodSpec createNextMethod(ExecutableElement method, TypeElement interfaceElement) {
         List<ParameterSpec> parameterSpecs = new ArrayList<>();
         List<String> parameterNames = new ArrayList<>();
         for (VariableElement parameter : method.getParameters()) {
@@ -164,45 +183,43 @@ public class AnnotationProcessor extends AbstractProcessor {
         }
         callBuilder.append(")");
 
-        StringBuilder call = new StringBuilder();
-
         String methodName = method.getSimpleName().toString();
         List<? extends VariableElement> parameters = method.getParameters();
         String parameterTypes = parameters.stream()
-                .map(p -> p.asType().toString())
-                .collect(Collectors.joining(".class, ")) +
-                (parameters.isEmpty() ? "" : ".class");
+                .map(p -> p.asType().toString() + ".class")
+                .collect(Collectors.joining(", "));
+
+        String interfaceName = interfaceElement.getQualifiedName().toString();
 
         String sub, type, result;
         if (method.getReturnType().getKind() == TypeKind.VOID) {
-            sub = "        " + callBuilder + ";\n" +
-                    "        return;\n";
+            sub = "        " + callBuilder + ";\n" + "        return;\n";
             type = "";
             result = "";
         } else {
-            sub = "        result = " + callBuilder + ";\n" +
-                    "        return result;\n";
+            sub = "        result = " + callBuilder + ";\n" + "        return result;\n";
             type = method.getReturnType().toString() + " result;\n";
-            result = "throw new RuntimeException(\"No valid someMethod implementation found\");";
+            result = "throw new RuntimeException(\"No valid " + methodName + " implementation found\");";
         }
-        call.append(
-                "java.util.List<Class<?>> order = C3Linearization.c3Linearization(this.getClass());\n" +
-                        "order.remove(0);\n" +
-                        type +
-                        "for (Class<?> cls : order) {\n" +
-                        "    try {\n" +
-                        "        java.lang.reflect.Method method = cls.getDeclaredMethod(\"" + methodName + "\"" + (parameters.isEmpty() ? "" : ", " + parameterTypes) + ");\n" +
-                        "        ISomeInterface p = (ISomeInterface) cls.getDeclaredConstructor().newInstance();\n" +
-                        sub +
-                        "    } catch (Exception e) {\n" +
-                        "        continue;\n" +
-                        "    }\n" +
-                        "}\n" +
-                        result);
 
-        codeBuilder.add(call.toString());
+        String code = "java.util.List<Class<?>> order = C3Linearization.c3Linearization(this.getClass());\n" +
+                "order.remove(0);\n" +
+                type +
+                "for (Class<?> cls : order) {\n" +
+                "    try {\n" +
+                "        java.lang.reflect.Method method = cls.getDeclaredMethod(\"" + methodName + "\"" +
+                (parameters.isEmpty() ? "" : ", " + parameterTypes) + ");\n" +
+                "        " + interfaceName + " p = (" + interfaceName + ") cls.getDeclaredConstructor().newInstance();\n" +
+                sub +
+                "    } catch (Exception e) {\n" +
+                "        continue;\n" +
+                "    }\n" +
+                "}\n" +
+                result;
 
-        return MethodSpec.methodBuilder("next" + method.getSimpleName().toString())
+        codeBuilder.add(code);
+
+        return MethodSpec.methodBuilder("next" + methodName)
                 .addModifiers(Modifier.PRIVATE)
                 .returns(ClassName.get(method.getReturnType()))
                 .addParameters(parameterSpecs)
