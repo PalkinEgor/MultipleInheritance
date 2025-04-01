@@ -1,7 +1,7 @@
 package ru.nsu.palkin;
 
 @Homogenous
-public interface Interface {
+public interface DiamondInterface {
     void someMethod();
 
     void someMethod2();

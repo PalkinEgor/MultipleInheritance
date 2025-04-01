@@ -1,6 +1,8 @@
-package ru.nsu.palkin;
+package ru.nsu.palkin.diamond;
 
-public class ClassD implements Interface {
+import ru.nsu.palkin.DiamondInterface;
+
+public class ClassD implements DiamondInterface {
 
     @Override
     public void someMethod() {
