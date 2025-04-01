@@ -129,7 +129,9 @@ public class AnnotationProcessor extends AbstractProcessor {
                 .addModifiers(Modifier.ABSTRACT, Modifier.PUBLIC)
                 .addSuperinterface(ClassName.get("ru.nsu.palkin", "ISomeInterface"))
                 .addField(createParentsField())
-                .addMethod(createConstructor());
+                .addMethod(createConstructor())
+                .addMethod(createMroMethod())
+                .addMethod(createGetSuperClassesMethod());
 
         for (ExecutableElement method : ElementFilter.methodsIn(interfaceElement.getEnclosedElements())) {
             classBuilder.addMethod(createMethod(method));
@@ -138,6 +140,30 @@ public class AnnotationProcessor extends AbstractProcessor {
 
         return classBuilder.build();
 
+    }
+
+    private MethodSpec createGetSuperClassesMethod() {
+        return MethodSpec.methodBuilder("getSuperClasses")
+                .addModifiers(Modifier.PUBLIC)
+                .returns(void.class)
+                .addCode("""
+                        $T annotation = this.getClass().getAnnotation($T.class);
+                        if (annotation != null) {
+                            System.out.println(java.util.Arrays.toString(annotation.value()));
+                        }
+                        """, MultiInheritance.class, MultiInheritance.class)
+                .build();
+    }
+
+    private MethodSpec createMroMethod() {
+        return MethodSpec.methodBuilder("mro")
+                .addModifiers(Modifier.PUBLIC)
+                .returns(void.class)
+                .addCode("""
+                        List<Class<?>> order = C3Linearization.c3Linearization(this.getClass());
+                        System.out.println(order);
+                        """)
+                .build();
     }
 
     private MethodSpec createNextMethod(ExecutableElement method) {
@@ -198,7 +224,7 @@ public class AnnotationProcessor extends AbstractProcessor {
         codeBuilder.add(call.toString());
 
         return MethodSpec.methodBuilder("next" + method.getSimpleName().toString())
-                .addModifiers(Modifier.PUBLIC)
+                .addModifiers(Modifier.PRIVATE)
                 .returns(ClassName.get(method.getReturnType()))
                 .addParameters(parameterSpecs)
                 .addCode(codeBuilder.build())
